@@ -26,6 +26,7 @@
   --club:#ffe0b3;
   --done:#e5e7eb;
   --current:#6ea0ff;
+  --inprogress:#dbe8ff;
   --shadow:0 12px 28px rgba(53,73,109,0.10);
   --radius:22px;
 }
@@ -86,7 +87,8 @@ body{
   box-shadow:var(--shadow);
   transition:.2s ease;
 }
-.card.current{outline:4px solid var(--current);transform:translateY(-1px)}
+.card.current,.card.in-progress{outline:4px solid var(--current);transform:translateY(-1px)}
+.card.in-progress{background:var(--inprogress)!important}
 .card.done{background:var(--done)!important;opacity:.72;border-style:dashed}
 .subject-arabic{background:var(--arabic)}
 .subject-english{background:var(--english)}
@@ -122,7 +124,7 @@ body{
   font-size:18px;
   box-shadow:0 8px 18px rgba(36,48,71,.18);
 }
-.card.current .action{background:#295fd6}
+.card.current .action,.card.in-progress .action{background:#295fd6}
 .card.done .action{background:#9ca3af;box-shadow:none}
 .footer-note{color:var(--muted);font-size:12px;text-align:center;margin-top:8px}
 @media (max-width:640px){
@@ -159,7 +161,7 @@ body{
     <button data-day="thursday" onclick="showDay('thursday')">Thu</button>
   </div>
 
-  <div class="helper">Only the current class can be opened.</div>
+  <div class="helper">Classes open 5 minutes before start and stay reopenable until 10 minutes after end.</div>
 
   <div id="monday" class="day"></div>
   <div id="tuesday" class="day"></div>
@@ -228,6 +230,8 @@ const data = {
 
 let activeDay = 'monday';
 let lastAnnounced = null;
+const EARLY_OPEN_MINUTES = 5;
+const LATE_REOPEN_MINUTES = 10;
 
 function toMinutes(t){
   const [a,b] = t.split(':').map(Number);
@@ -241,6 +245,14 @@ function nowMinutes(){
 
 function prettifyDay(day){
   return day.charAt(0).toUpperCase() + day.slice(1);
+}
+
+function isLiveWindow(start, end, now){
+  return now >= (start - EARLY_OPEN_MINUTES) && now <= end;
+}
+
+function isReopenWindow(start, end, now){
+  return now >= (start - EARLY_OPEN_MINUTES) && now <= (end + LATE_REOPEN_MINUTES);
 }
 
 function render(){
@@ -277,32 +289,46 @@ function render(){
 function updateStates(){
   const now = nowMinutes();
   document.querySelectorAll('.card').forEach(card => {
-    card.classList.remove('current');
+    card.classList.remove('current','in-progress');
     const statusEl = card.querySelector('.status');
+    const actionEl = card.querySelector('.action');
     const start = toMinutes(card.dataset.start);
     const end = toMinutes(card.dataset.end);
     const done = localStorage.getItem(card.dataset.key) === 'done';
+    const sameDay = card.dataset.day === activeDay;
+    const liveWindow = isLiveWindow(start, end, now);
+    const reopenWindow = isReopenWindow(start, end, now);
 
     if(done){
       card.classList.add('done');
-      card.querySelector('.action').textContent = '✓ Done';
-      statusEl.textContent = 'Finished';
+      actionEl.textContent = 'Reopen';
+    } else {
+      card.classList.remove('done');
+      actionEl.textContent = 'Join';
+    }
+
+    if(!sameDay){
+      statusEl.textContent = done ? 'Finished' : 'Coming up';
       return;
     }
 
-    card.classList.remove('done');
-    card.querySelector('.action').textContent = 'Join';
-
-    if(card.dataset.day === activeDay && now >= start && now <= end){
-      card.classList.add('current');
-      statusEl.textContent = 'Current class';
-    } else if(card.dataset.day === activeDay && now < start){
-      statusEl.textContent = 'Coming up';
-    } else if(card.dataset.day === activeDay && now > end){
-      statusEl.textContent = 'Missed or not opened';
-    } else {
-      statusEl.textContent = 'Coming up';
+    if(liveWindow){
+      card.classList.add('in-progress');
+      statusEl.textContent = 'In Progress';
+      return;
     }
+
+    if(reopenWindow && now > end){
+      statusEl.textContent = 'Reopen available';
+      return;
+    }
+
+    if(now < (start - EARLY_OPEN_MINUTES)){
+      statusEl.textContent = 'Coming up';
+      return;
+    }
+
+    statusEl.textContent = done ? 'Finished' : 'Closed';
   });
 }
 
@@ -346,7 +372,6 @@ function announceNext(){
   document.querySelectorAll(`#${activeDay} .card`).forEach(card => {
     const start = toMinutes(card.dataset.start);
     const key = card.dataset.key;
-    if(localStorage.getItem(key) === 'done') return;
     if(start > now && start - now <= 1 && lastAnnounced !== key){
       lastAnnounced = key;
       speak('Alia, next class');
@@ -369,6 +394,9 @@ document.addEventListener('click', e => {
 
   const card = action.closest('.card');
   const url = card.dataset.url;
+  const now = nowMinutes();
+  const start = toMinutes(card.dataset.start);
+  const end = toMinutes(card.dataset.end);
 
   if(url === '#'){
     e.preventDefault();
@@ -376,7 +404,7 @@ document.addEventListener('click', e => {
     return;
   }
 
-  if(!card.classList.contains('current')){
+  if(!isReopenWindow(start, end, now)){
     e.preventDefault();
     speak('Not now');
     return;
@@ -384,8 +412,8 @@ document.addEventListener('click', e => {
 
   localStorage.setItem(card.dataset.key, 'done');
   card.classList.add('done');
-  card.querySelector('.action').textContent = '✓ Done';
-  card.querySelector('.status').textContent = 'Finished';
+  card.querySelector('.action').textContent = 'Reopen';
+  card.querySelector('.status').textContent = now <= end ? 'In Progress' : 'Reopen available';
   updateProgress();
   showStars();
 });
